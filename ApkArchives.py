@@ -128,7 +128,7 @@ def GetApkInfo(set_name, apk_name, include_response=False):
         logger.warning('Cannot get info %s' % info_url)
         if include_response:
             return None, None
-        else
+        else:
             return None
 
     return_info = (version, category, int(ndownload.replace(',','')))
