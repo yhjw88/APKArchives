@@ -59,7 +59,7 @@ def CheckSetValid(url):
     logger.debug('Skipped %s due to insufficient data' % url)
     return False
 
-def List(suffix_range=range(256)):
+def List(suffix_range=range(1)):
     """
     Returns an iterator of (name of latest metadata set, name of apk) for
     for each suffix in @suffix_range.
@@ -108,22 +108,32 @@ def List(suffix_range=range(256)):
             apk = os.path.splitext(apk)[0]
             yield (set_name, apk)
 
+def ApkJsonToInfo(apk_json):
+    """
+    Given the apk json (containing the info)
+    This returns the information to store into the db in a tuple
+    """
+    version = apk_json['details']['app_details']['version_code']
+    # 'category' is a singleton list
+    category  = apk_json['details']['app_details']['app_category'][0]
+    isize = apk_json['details']['app_details']['installation_size']
+    # need to strip the trailing '+' from 'num_downloads'
+    ndownload = apk_json['details']['app_details']['num_downloads'][:-1]
+
+    return (version, category, int(isize), int(ndownload.replace(',','')))
+
 VERSION=0
 CATEGORY=1
 NDOWNLOAD=2
-def GetApkInfo(set_name, apk_name, include_response=False):
+def GetApkInfo(set_name, apk_name, include_json=False):
     """
-    Returns the info as a tuple and the response as the json string dump received from the url (if prompted).
+    Returns the info as a tuple and the response received from the url in json format (if prompted).
     """
     info_url = url_base + set_name + '/' + apk_name + '.json'
     try:
         response = urllib2.urlopen(info_url)
-        info = json.load(response)
-        version = info['details']['app_details']['version_code']
-        # 'category' is a singleton list
-        category  = info['details']['app_details']['app_category'][0]
-        # need to strip the trailing '+' from 'num_downloads'
-        ndownload = info['details']['app_details']['num_downloads'][:-1]
+        apk_json = json.load(response)
+        return_info = ApkJsonToInfo(apk_json)
     except:
         logger.warning('Cannot get info %s' % info_url)
         if include_response:
@@ -131,9 +141,8 @@ def GetApkInfo(set_name, apk_name, include_response=False):
         else:
             return None
 
-    return_info = (version, category, int(ndownload.replace(',','')))
-    if include_response:
-        return json.dumps(info), return_info
+    if include_json:
+        return apk_json, return_info
     else:
         return return_info
     
@@ -164,6 +173,7 @@ def Save(db_filename='apks.db', grep=lambda x:True):
                      name TEXT PRIMARY KEY,
                      version INTEGER,
                      category TEXT,
+                     isize INTEGER,
                      ndownload INTEGER)''')
         for set_name, apk_name in List():
             info = GetApkInfo(set_name, apk_name)
@@ -171,7 +181,7 @@ def Save(db_filename='apks.db', grep=lambda x:True):
                 logger.debug('Skipped %s' % apk_name)
                 continue
             logger.debug('Insert %s,%s to %s' % (apk_name, info, db_filename))
-            c.execute('insert or replace into apks values(?, ?, ?, ?)',
+            c.execute('insert or replace into apks values(?, ?, ?, ?, ?)',
                       (apk_name,) + info)
             db.commit()
 
@@ -186,14 +196,38 @@ def Cache(db_filename='cache.db', grep=lambda x:True):
                      name TEXT PRIMARY KEY,
                      json TEXT)''')
         for set_name, apk_name in List():
-            response_str, info = GetApkInfo(set_name, apk_name, True)
+            apk_json, info = GetApkInfo(set_name, apk_name, True)
             if info is None or not grep(info):
                 logger.debug('Skipped %s' % apk_name)
                 continue
             logger.debug('Inserted %s' % apk_name)
-            c.execute('insert or replace into apks values(?, ?)',
-                      (apk_name, response_str))
+            c.execute('INSERT OR REPLACE INTO apks VALUES(?, ?)',
+                      (apk_name, json.dumps(apk_json)))
             db.commit()
+
+def Convert(in_filename='cache.db', out_filename='apks.db'):
+    try:
+        os.unlink(out_filename)
+    except OSError:
+        pass
+    with sqlite3.connect(in_filename) as in_db, sqlite3.connect(out_filename) as out_db:
+        out_c = out_db.cursor()
+        out_c.execute('''CREATE TABLE apks (
+                         name TEXT PRIMARY KEY,
+                         version INTEGER,
+                         category TEXT,
+                         isize INTEGER,
+                         ndownload INTEGER)''')
+        in_c = in_db.cursor()
+        in_c.execute('SELECT * FROM apks')
+        for counter, row in enumerate(in_c):
+            apk_name = row[0]
+            apk_json = json.loads(row[1])
+            info = ApkJsonToInfo(apk_json)
+            logger.debug('%d: Inserted info for %s' % (counter, apk_name))
+            out_c.execute('insert or replace into apks values(?, ?, ?, ?, ?)',
+                      (apk_name,) + info)
+            out_db.commit()
 
 def Usage():
     print "Usage: ApkArchives [save|cache|convert]"
@@ -208,6 +242,6 @@ if __name__ == '__main__':
     elif sys.argv[1] == 'cache':
         Cache(grep=lambda x: x[NDOWNLOAD] >= 10000)
     elif sys.argv[1] == 'convert':
-        print "Not implemented yet"
+        Convert()
     else:
         Usage()
