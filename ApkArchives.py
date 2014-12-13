@@ -264,6 +264,6 @@ if __name__ == '__main__':
     elif sys.argv[1] == 'convert':
         Convert()
     elif sys.argv[1] == 'download':
-        Download(where='ndownload >= 500000')
+        Download(where='ndownload >= 500000 AND micros = 0')
     else:
         Usage()
