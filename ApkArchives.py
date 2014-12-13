@@ -3,8 +3,9 @@
 # Downloads metadata and files from Play Drone Archives
 # Currently supports:
 #  - save - save metadata directly to current SQLite3 schema
-#  - cache - save json metadata to very simple key value store PickleDB
-#  - convert - take json metadata from PickleDB and store into SQLite3 schema
+#  - cache - save json metadata to SQLite3 in key value format
+#  - convert - take json metadata from SQLite3 key value and store into SQLite3 schema
+#  - download - use SQLite3 schema of metadata to download actual APKs, versioncode required
 
 import os
 import json
@@ -116,11 +117,13 @@ def ApkJsonToInfo(apk_json):
     version = apk_json['details']['app_details']['version_code']
     # 'category' is a singleton list
     category  = apk_json['details']['app_details']['app_category'][0]
+    # 'micros' is the cost in the native currency * 10^6
+    micros = apk_json['offer'][0]['micros']
     isize = apk_json['details']['app_details']['installation_size']
     # need to strip the trailing '+' from 'num_downloads'
     ndownload = apk_json['details']['app_details']['num_downloads'][:-1]
 
-    return (version, category, int(isize), int(ndownload.replace(',','')))
+    return (version, category, int(micros), int(isize), int(ndownload.replace(',','')))
 
 VERSION=0
 CATEGORY=1
@@ -173,6 +176,7 @@ def Save(db_filename='apks.db', grep=lambda x:True):
                      name TEXT PRIMARY KEY,
                      version INTEGER,
                      category TEXT,
+                     micros INTEGER,
                      isize INTEGER,
                      ndownload INTEGER)''')
         for set_name, apk_name in List():
@@ -216,6 +220,7 @@ def Convert(in_filename='cache.db', out_filename='apks.db'):
                          name TEXT PRIMARY KEY,
                          version INTEGER,
                          category TEXT,
+                         micros INTEGER,
                          isize INTEGER,
                          ndownload INTEGER)''')
         in_c = in_db.cursor()
@@ -225,12 +230,27 @@ def Convert(in_filename='cache.db', out_filename='apks.db'):
             apk_json = json.loads(row[1])
             info = ApkJsonToInfo(apk_json)
             logger.debug('%d: Inserted info for %s' % (counter, apk_name))
-            out_c.execute('insert or replace into apks values(?, ?, ?, ?, ?)',
+            out_c.execute('insert or replace into apks values(?, ?, ?, ?, ?, ?)',
                       (apk_name,) + info)
             out_db.commit()
 
+def Download(in_filename='apks.db', out_folder='apks', where='1'):
+    if not os.path.exists(out_folder):
+        os.makedirs(out_folder)
+    logger.debug('Using directory %s' % out_folder) 
+    
+    with sqlite3.connect(in_filename) as in_db:
+        in_c = in_db.cursor()
+        in_c.execute('SELECT name, version FROM apks WHERE ' + where)
+        os.chdir(out_folder)
+        for counter, row in enumerate(in_c):
+            apk_name = row[0]
+            version_code = row[1]
+            logger.debug('%d' % counter) 
+            DownloadApk(apk_name, version_code)
+
 def Usage():
-    print "Usage: ApkArchives [save|cache|convert]"
+    print "Usage: ApkArchives [save|cache|convert|download]"
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -243,5 +263,7 @@ if __name__ == '__main__':
         Cache(grep=lambda x: x[NDOWNLOAD] >= 10000)
     elif sys.argv[1] == 'convert':
         Convert()
+    elif sys.argv[1] == 'download':
+        Download(where='ndownload >= 500000')
     else:
         Usage()
