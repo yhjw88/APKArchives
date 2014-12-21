@@ -139,7 +139,7 @@ def GetApkInfo(set_name, apk_name, include_json=False):
         return_info = ApkJsonToInfo(apk_json)
     except:
         logger.warning('Cannot get info %s' % info_url)
-        if include_response:
+        if include_json:
             return None, None
         else:
             return None
