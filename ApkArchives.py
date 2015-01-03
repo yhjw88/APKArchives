@@ -127,7 +127,9 @@ def ApkJsonToInfo(apk_json):
 
 VERSION=0
 CATEGORY=1
-NDOWNLOAD=2
+MICROS=2
+ISIZE=3
+NDOWNLOAD=4
 def GetApkInfo(set_name, apk_name, include_json=False):
     """
     Returns the info as a tuple and the response received from the url in json format (if prompted).
